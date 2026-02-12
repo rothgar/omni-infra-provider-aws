@@ -108,6 +108,30 @@ SG_ID=$(aws ec2 create-security-group \
 
 ### 2. Deploy Infrastructure Provider
 
+Create the infrastructure provider via `omnictl`
+
+```bash
+omnictl infraprovider create aws
+```
+This will print output like:
+
+```bash
+OMNI_ENDPOINT=https://omni...
+OMNI_SERVICE_ACCOUNT_KEY=elashecidgcegiDEDTNE...
+```
+Export these environment variables into your shell and save them to a file.
+
+```bash
+echo "export OMNI_ENDPOINT=$OMNI_ENDPOINT" > .env
+echo "export OMNI_SERVICE_ACCOUNT_KEY=$OMNI_SERVICE_ACCOUNT_KEY" >> .env
+```
+
+Source the file
+
+```bash
+source .env
+```
+
 #### Run locally with Docker
 
 This mounts your local AWS credentials into the container for AWS authentication.
@@ -245,23 +269,6 @@ EOF
 
 ### 3. Create Infrastructure Provider and Machine Class
 
-Create the infrastructure provider via `omnictl`
-
-```bash
-omnictl infraprovider create aws
-```
-This will print output like:
-
-```bash
-OMNI_ENDPOINT=https://omni...
-OMNI_SERVICE_ACCOUNT_KEY=elashecidgcegiDEDTNE...
-```
-Export these environment variables into your shell and save them to a file.
-
-```bash
-echo "export OMNI_ENDPOINT=$OMNI_ENDPOINT" > .env
-echo "export OMNI_SERVICE_ACCOUNT_KEY=$OMNI_SERVICE_ACCOUNT_KEY" >> .env
-```
 
 Create a machine class for the nodes.
 
