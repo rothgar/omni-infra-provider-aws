@@ -96,21 +96,6 @@ aws ec2 authorize-security-group-egress \
 aws ec2 authorize-security-group-egress \
   --group-id $SG_ID \
   --ip-permissions IpProtocol=-1,Ipv6Ranges='[{CidrIpv6=::/0}]'
-
-# Print configuration for use in machine class
-echo ""
-echo "VPC Configuration Created:"
-echo "VPC ID: $VPC_ID"
-echo "Subnet IDs: $SUBNET_1, $SUBNET_2, $SUBNET_3"
-echo "Security Group ID: $SG_ID"
-echo ""
-echo "Use these in your machine class:"
-echo "  subnet_ids:"
-echo "    - $SUBNET_1"
-echo "    - $SUBNET_2"
-echo "    - $SUBNET_3"
-echo "  security_group_ids:"
-echo "    - $SG_ID"
 ```
 
 ### 2. Create Infrastructure Provider and Machine Class
@@ -156,6 +141,7 @@ spec:
         - $SUBNET_1
         - $SUBNET_2
         - $SUBNET_3
+EOF
 ```
 
 Apply the machine class
@@ -172,15 +158,12 @@ omnictl apply -f machine-class.yaml
 docker run -d \
   --name omni-infra-provider-aws \
   --restart unless-stopped \
-  -e OMNI_ENDPOINT=https://your-omni-instance.com \
-  -e OMNI_SERVICE_ACCOUNT_KEY=your-key \
-  -e AWS_REGION=us-west-2 \
+  -e OMNI_ENDPOINT \
+  -e OMNI_SERVICE_ACCOUNT_KEY \
+  -e AWS_REGION \
   -e AWS_ACCESS_KEY_ID=your-access-key \
   -e AWS_SECRET_ACCESS_KEY=your-secret-key \
   rothgar/omni-infra-provider-aws:latest
-
-# View logs
-docker logs -f omni-infra-provider-aws
 ```
 
 **Alternative: Use AWS credentials from host**
@@ -189,10 +172,10 @@ docker logs -f omni-infra-provider-aws
 docker run -d \
   --name omni-infra-provider-aws \
   --restart unless-stopped \
-  -v ~/.aws:/home/omni/.aws:ro \
-  -e OMNI_ENDPOINT=https://your-omni-instance.com \
-  -e OMNI_SERVICE_ACCOUNT_KEY=your-key \
-  -e AWS_REGION=us-west-2 \
+  -v ~/.aws:$HOME/.aws:ro \
+  -e OMNI_ENDPOINT \
+  -e OMNI_SERVICE_ACCOUNT_KEY \
+  -e AWS_REGION \
   -e AWS_PROFILE=default \
   rothgar/omni-infra-provider-aws:latest
 ```
@@ -285,14 +268,6 @@ rm omni-provider-policy.json trust-policy.json
 **Create EC2 Instance**
 
 ```bash
-# Set your configuration
-OMNI_ENDPOINT=https://your-omni-instance.com
-OMNI_SERVICE_ACCOUNT_KEY=your-key
-AWS_REGION=us-west-2
-SUBNET_ID=subnet-xxxxx
-SECURITY_GROUP=sg-xxxxx
-
-# Get latest Flatcar Stable AMI ID for your region
 AMI_ID=$(aws ec2 describe-images \
   --region $AWS_REGION \
   --owners 075585003325 \
@@ -305,8 +280,8 @@ aws ec2 run-instances \
   --region $AWS_REGION \
   --image-id $AMI_ID \
   --instance-type t3.micro \
-  --subnet-id $SUBNET_ID \
-  --security-group-ids $SECURITY_GROUP \
+  --subnet-id $SUBNET_1 \
+  --security-group-ids $SG_ID \
   --iam-instance-profile Name=OmniInfraProviderProfile \
   --user-data "$(cat <<EOF
 #!/bin/bash
@@ -324,28 +299,6 @@ EOF
   --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=omni-infra-provider-aws}]"
 ```
 
-**Note**: The container can access the EC2 metadata endpoint (169.254.169.254) from within Docker's default bridge network to obtain IAM credentials automatically.
-
-### 3. Create Machine Class in Omni
-
-Once the provider is running, create a machine class in Omni:
-
-```yaml
-kind: MachineClass
-name: aws
-provider: aws
-parameters:
-  instance_type: t3.medium
-  subnet_ids:
-    - subnet-xxxxx
-    - subnet-yyyyy
-    - subnet-zzzzz
-  security_group_ids:
-    - sg-xxxxx
-  volume_size: 50
-  arch: amd64
-```
-
 ## Available Parameters
 
 | Parameter | Type | Required | Description |
@@ -357,46 +310,6 @@ parameters:
 | `volume_size` | integer | No | Root volume size in GB (default: 8) |
 | `arch` | string | No | Architecture: `amd64` or `arm64` (default: amd64) |
 
-## Makefile Targets
-
-```bash
-make help                 # Show all available targets
-make omni-cluster-list    # List clusters in Omni
-```
-
-## Requirements
-
-- Go 1.23+
-- AWS CLI configured with credentials
-- Omni instance with service account
-- Docker (for containerized deployment)
-
-## AWS Credentials
-
-The provider uses the standard AWS credential chain:
-
-1. Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
-2. `~/.aws/credentials` file
-3. `~/.aws/config` file
-4. IAM role (when running on EC2)
-
-```bash
-# Configure AWS CLI
-aws configure
-
-# Or use specific profile
-export AWS_PROFILE=my-profile
-./omni-infra-provider-aws ...
-```
-
-
-## Development
-
-The published Docker image (`rothgar/omni-infra-provider-aws:latest`) is the recommended way to run this provider. See the "Deploy Infrastructure Provider" section above for usage instructions.
-
-## License
-
-See LICENSE file for details.
 
 ## Support
 
