@@ -1,0 +1,4 @@
+omni-infra-provider-aws
+.env
+machine-class.yaml
+.claude/*

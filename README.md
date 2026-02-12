@@ -104,6 +104,22 @@ SG_ID=$(aws ec2 create-security-group \
   --vpc-id $VPC_ID \
   --tag-specifications 'ResourceType=security-group,Tags=[{Key=Name,Value=omni-talos}]' \
   --query 'GroupId' --output text)
+
+# Add security group rules
+# SSH access from your current IP (for troubleshooting)
+aws ec2 authorize-security-group-ingress \
+  --group-id $SG_ID \
+  --protocol tcp \
+  --port 22 \
+  --cidr $(curl -s ifconfig.me)/32
+
+# Allow all traffic within the security group (for node-to-node communication)
+aws ec2 authorize-security-group-ingress \
+  --group-id $SG_ID \
+  --protocol -1 \
+  --source-group $SG_ID
+
+# Allow all outbound traffic (default for new security groups)
 ```
 
 ### 2. Deploy Infrastructure Provider
@@ -265,7 +281,6 @@ docker run -d \
   --restart unless-stopped \
   -e OMNI_ENDPOINT=$OMNI_ENDPOINT \
   -e OMNI_SERVICE_ACCOUNT_KEY=$OMNI_SERVICE_ACCOUNT_KEY \
-  -e AWS_REGION=$AWS_REGION \
   ghcr.io/rothgar/omni-infra-provider-aws:latest
 EOF
 )" \
@@ -289,7 +304,12 @@ INSTANCE_IP=$(aws ec2 describe-instances \
 
 # SSH into the instance (default user is 'core' for Flatcar)
 ssh -i ~/.ssh/$KEY_NAME.pem core@$INSTANCE_IP
+```
+Read logs
 
+```bash
+```
+```
 # Once connected, view container logs:
 docker logs omni-infra-provider-aws
 
@@ -299,17 +319,6 @@ docker logs -f omni-infra-provider-aws
 # View last 100 lines:
 docker logs --tail 100 omni-infra-provider-aws
 ```
-
-**Alternative: AWS Systems Manager Session Manager**
-
-If you don't want to manage SSH keys, you can use AWS Systems Manager:
-
-```bash
-# Connect without SSH (requires AWS SSM agent, not available on Flatcar by default)
-aws ssm start-session --target $INSTANCE_ID
-```
-
-**Note:** Flatcar doesn't include SSM agent by default. For SSM access, consider using Amazon Linux 2 instead of Flatcar.
 
 </details>
 
@@ -339,6 +348,39 @@ Apply the machine class. Make sure you run this from your user's Omni credential
 ```bash
 omnictl apply -f machine-class.yaml
 ```
+
+### 4. Create a Cluster
+
+Create a cluster template file or use the provided example:
+
+```bash
+cat <<EOF > cluster-template.yaml
+kind: Cluster
+name: aws
+kubernetes:
+  version: v1.34.2
+talos:
+  version: v1.12.3
+---
+kind: ControlPlane
+machineClass:
+  name: aws
+  size: 1
+---
+kind: Workers
+machineClass:
+  name: aws
+  size: 3
+EOF
+```
+
+Apply the cluster template to create your cluster:
+
+```bash
+omnictl cluster template sync -f cluster-template.yaml
+```
+
+This will create a cluster named "aws" with 1 control plane node and 3 worker nodes using the machine class you created.
 
 ## Available Parameters
 
