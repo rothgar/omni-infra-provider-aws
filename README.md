@@ -143,12 +143,12 @@ docker run -d \
   -v $HOME/.aws:/home/omni/.aws:ro \
   -e OMNI_ENDPOINT \
   -e OMNI_SERVICE_ACCOUNT_KEY \
-  -e AWS_REGION \
   -e AWS_PROFILE=default \
   ghcr.io/rothgar/omni-infra-provider-aws:latest
 ```
 
-#### Deploy to EC2
+<details>
+<summary><h4>Deploy to EC2 (Optional)</h4></summary>
 
 **Prerequisites: Create IAM Role**
 
@@ -239,7 +239,7 @@ rm omni-provider-policy.json trust-policy.json
 AMI_ID=$(aws ec2 describe-images \
   --region $AWS_REGION \
   --owners 075585003325 \
-  --filters "Name=name,Values=Flatcar-stable-*-hvm" \
+  --filters "Name=name,Values=Flatcar-stable-*-hvm" "Name=architecture,Values=x86_64" \
   --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
   --output text)
 
@@ -260,12 +260,13 @@ docker run -d \
   --restart unless-stopped \
   -e OMNI_ENDPOINT=$OMNI_ENDPOINT \
   -e OMNI_SERVICE_ACCOUNT_KEY=$OMNI_SERVICE_ACCOUNT_KEY \
-  -e AWS_REGION=$AWS_REGION \
   ghcr.io/rothgar/omni-infra-provider-aws:latest
 EOF
 )" \
   --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=omni-infra-provider-aws}]"
 ```
+
+</details>
 
 ### 3. Create Infrastructure Provider and Machine Class
 
@@ -288,7 +289,7 @@ EOF
 
 **Note:** The `providerdata` field must be a JSON-encoded string, not a YAML object.
 
-Apply the machine class
+Apply the machine class. Make sure you run this from your user's Omni credentials and not with the `OMNI_SERVICE_ACCOUNT_KEY`.
 
 ```bash
 omnictl apply -f machine-class.yaml
