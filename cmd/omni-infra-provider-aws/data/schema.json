@@ -1,0 +1,41 @@
+{
+  "type": "object",
+  "properties": {
+    "instance_type": {
+      "type": "string",
+      "description": "AWS Instance Type (e.g. t3.medium)"
+    },
+    "subnet_id": {
+      "type": "string",
+      "description": "AWS Subnet ID (single subnet)"
+    },
+    "subnet_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "AWS Subnet IDs (multiple subnets for HA across AZs - randomly selected)"
+    },
+    "security_group_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "List of Security Group IDs"
+    },
+    "volume_size": {
+      "type": "integer",
+      "minimum": 10,
+      "description": "Root volume size in GB"
+    },
+    "arch": {
+      "type": "string",
+      "enum": ["amd64", "arm64"],
+      "default": "amd64",
+      "description": "CPU Architecture"
+    }
+  },
+  "required": [
+    "instance_type"
+  ]
+}

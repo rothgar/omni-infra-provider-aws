@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <!-- Dark background -->
+  <rect width="256" height="256" fill="#232F3E" rx="20"/>
+
+  <!-- AWS Orange -->
+  <defs>
+    <linearGradient id="orangeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FF9900;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FF7700;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- AWS Logo Text -->
+  <g transform="translate(128, 128)">
+    <!-- Smile/Arrow under AWS -->
+    <path d="M -70 30 Q 0 50 70 30"
+          fill="none"
+          stroke="url(#orangeGradient)"
+          stroke-width="6"
+          stroke-linecap="round"/>
+    <path d="M 65 25 L 70 30 L 65 35"
+          fill="none"
+          stroke="url(#orangeGradient)"
+          stroke-width="6"
+          stroke-linecap="round"
+          stroke-linejoin="round"/>
+
+    <!-- AWS Text -->
+    <text x="0" y="-10"
+          font-family="Arial, sans-serif"
+          font-size="72"
+          font-weight="bold"
+          fill="url(#orangeGradient)"
+          text-anchor="middle">AWS</text>
+  </g>
+
+  <!-- Cloud icon in top right corner -->
+  <g transform="translate(200, 40)">
+    <path d="M 0 -5 Q -5 -15 -15 -15 Q -20 -25 -30 -20 Q -35 -15 -30 -5 Z"
+          fill="#FF9900"
+          opacity="0.3"/>
+  </g>
+
+  <!-- Small Omni indicator -->
+  <circle cx="40" cy="40" r="8" fill="#FF9900" opacity="0.5"/>
+  <text x="40" y="65"
+        font-family="Arial, sans-serif"
+        font-size="12"
+        fill="#FF9900"
+        text-anchor="middle"
+        opacity="0.7">Omni</text>
+</svg>
