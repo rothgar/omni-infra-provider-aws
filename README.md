@@ -121,7 +121,7 @@ docker run -d \
   -e OMNI_SERVICE_ACCOUNT_KEY \
   -e AWS_REGION \
   -e AWS_PROFILE=default \
-  rothgar/omni-infra-provider-aws:latest
+  ghcr.io/rothgar/omni-infra-provider-aws:latest
 ```
 
 #### Deploy to EC2
@@ -237,7 +237,7 @@ docker run -d \
   -e OMNI_ENDPOINT=$OMNI_ENDPOINT \
   -e OMNI_SERVICE_ACCOUNT_KEY=$OMNI_SERVICE_ACCOUNT_KEY \
   -e AWS_REGION=$AWS_REGION \
-  rothgar/omni-infra-provider-aws:latest
+  ghcr.io/rothgar/omni-infra-provider-aws:latest
 EOF
 )" \
   --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=omni-infra-provider-aws}]"
@@ -376,6 +376,27 @@ echo "Cleanup complete"
 ```
 
 **Note:** This assumes you still have the environment variables from the setup section. If you don't, you can find the resources by their Name tags or manually through the AWS console.
+
+## Releases
+
+Container images are automatically built and pushed to GitHub Container Registry when a new tag is created.
+
+### Available Tags
+
+- `ghcr.io/rothgar/omni-infra-provider-aws:latest` - Latest release
+- `ghcr.io/rothgar/omni-infra-provider-aws:v1.2.3` - Specific version
+- `ghcr.io/rothgar/omni-infra-provider-aws:main-<sha>` - Commit SHA from main branch
+
+### Creating a Release
+
+To create a new release:
+
+```bash
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
+```
+
+The GitHub Action will automatically build multi-arch images (amd64 and arm64) and push them to GHCR.
 
 ## Support
 
