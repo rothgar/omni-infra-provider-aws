@@ -120,8 +120,6 @@ aws ec2 authorize-security-group-ingress \
   --group-id $SG_ID \
   --protocol -1 \
   --source-group $SG_ID
-
-# Allow all outbound traffic (default for new security groups)
 ```
 
 ### 2. Deploy Infrastructure Provider
