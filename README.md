@@ -1,5 +1,7 @@
 # Omni AWS Infrastructure Provider
 
+:warning: This is not an official Siderolabs provider. Only run this if you liking being woken up at 2:00 AM. :warning:
+
 An infrastructure provider for [Omni](https://www.siderolabs.com/platform/saas-for-kubernetes/) that provisions and manages Talos Linux machines on AWS EC2.
 
 ## Quick Start
@@ -276,11 +278,16 @@ INSTANCE_ID=$(aws ec2 run-instances \
 #!/bin/bash
 set -e
 
+# Get AWS region from instance metadata
+TOKEN=\$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+AWS_REGION=\$(curl -s -H "X-aws-ec2-metadata-token: \$TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+
 docker run -d \
   --name omni-infra-provider-aws \
   --restart unless-stopped \
   -e OMNI_ENDPOINT=$OMNI_ENDPOINT \
   -e OMNI_SERVICE_ACCOUNT_KEY=$OMNI_SERVICE_ACCOUNT_KEY \
+  -e AWS_REGION=\$AWS_REGION \
   ghcr.io/rothgar/omni-infra-provider-aws:latest
 EOF
 )" \
