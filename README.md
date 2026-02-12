@@ -12,15 +12,32 @@ Create a VPC with IPv6 support and subnets across multiple availability zones:
 # Create VPC with IPv4 CIDR
 VPC_ID=$(aws ec2 create-vpc \
   --cidr-block 10.0.0.0/16 \
+  --amazon-provided-ipv6-cidr-block \
   --tag-specifications 'ResourceType=vpc,Tags=[{Key=Name,Value=omni-vpc}]' \
   --query 'Vpc.VpcId' --output text)
 
-# Associate IPv6 CIDR block with VPC
-IPV6_CIDR=$(aws ec2 associate-vpc-cidr-block \
-  --vpc-id $VPC_ID \
-  --amazon-provided-ipv6-cidr-block \
-  --query 'Ipv6CidrBlockAssociation.Ipv6CidrBlock' --output text)
+aws ec2 modify-vpc-attribute --vpc-id $VPC_ID --enable-dns-support
+aws ec2 modify-vpc-attribute --vpc-id $VPC_ID --enable-dns-hostnames
 
+# Associate IPv6 CIDR block with VPC
+IPV6_CIDR=$(aws ec2 describe-vpcs \
+  --vpc-ids $VPC_ID \
+  --query 'Vpcs[0].Ipv6CidrBlockAssociationSet[0].Ipv6CidrBlock' --output text)
+```
+
+Divide your IPV6_CIDR into 3 separate variables. Here is an example.
+
+```bash
+PREFIX=$(echo "$IPV6_CIDR" | cut -d':' -f1-3)
+BASE_HEX=$(echo "$IPV6_CIDR" | cut -d':' -f4 | cut -d'/' -f1)
+BASE_DEC=$((16#$BASE_HEX))
+
+IPV6_SUBNET_A="${PREFIX}:$(printf "%x" $((BASE_DEC + 0)))::/64"
+IPV6_SUBNET_B="${PREFIX}:$(printf "%x" $((BASE_DEC + 1)))::/64"
+IPV6_SUBNET_C="${PREFIX}:$(printf "%x" $((BASE_DEC + 2)))::/64"
+```
+
+```bash
 # Create Internet Gateway
 IGW_ID=$(aws ec2 create-internet-gateway \
   --tag-specifications 'ResourceType=internet-gateway,Tags=[{Key=Name,Value=omni-igw}]' \
@@ -35,7 +52,7 @@ aws ec2 attach-internet-gateway \
 SUBNET_1=$(aws ec2 create-subnet \
   --vpc-id $VPC_ID \
   --cidr-block 10.0.0.0/20 \
-  --ipv6-cidr-block ${IPV6_CIDR%::/56}:00::/64 \
+  --ipv6-cidr-block $IPV6_SUBNET_A \
   --availability-zone us-west-2a \
   --tag-specifications 'ResourceType=subnet,Tags=[{Key=Name,Value=omni-subnet-2a}]' \
   --query 'Subnet.SubnetId' --output text)
@@ -43,7 +60,7 @@ SUBNET_1=$(aws ec2 create-subnet \
 SUBNET_2=$(aws ec2 create-subnet \
   --vpc-id $VPC_ID \
   --cidr-block 10.0.16.0/20 \
-  --ipv6-cidr-block ${IPV6_CIDR%::/56}:10::/64 \
+  --ipv6-cidr-block $IPV6_SUBNET_B \
   --availability-zone us-west-2b \
   --tag-specifications 'ResourceType=subnet,Tags=[{Key=Name,Value=omni-subnet-2b}]' \
   --query 'Subnet.SubnetId' --output text)
@@ -51,7 +68,7 @@ SUBNET_2=$(aws ec2 create-subnet \
 SUBNET_3=$(aws ec2 create-subnet \
   --vpc-id $VPC_ID \
   --cidr-block 10.0.32.0/20 \
-  --ipv6-cidr-block ${IPV6_CIDR%::/56}:20::/64 \
+  --ipv6-cidr-block $IPV6_SUBNET_C \
   --availability-zone us-west-2c \
   --tag-specifications 'ResourceType=subnet,Tags=[{Key=Name,Value=omni-subnet-2c}]' \
   --query 'Subnet.SubnetId' --output text)
