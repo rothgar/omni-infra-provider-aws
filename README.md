@@ -104,92 +104,19 @@ SG_ID=$(aws ec2 create-security-group \
   --vpc-id $VPC_ID \
   --tag-specifications 'ResourceType=security-group,Tags=[{Key=Name,Value=omni-talos}]' \
   --query 'GroupId' --output text)
-
-# Add egress rules for IPv4 and IPv6
-aws ec2 authorize-security-group-egress \
-  --group-id $SG_ID \
-  --ip-permissions IpProtocol=-1,IpRanges='[{CidrIp=0.0.0.0/0}]'
-
-aws ec2 authorize-security-group-egress \
-  --group-id $SG_ID \
-  --ip-permissions IpProtocol=-1,Ipv6Ranges='[{CidrIpv6=::/0}]'
-```
-
-### 2. Create Infrastructure Provider and Machine Class
-
-Create the infrastructure provider via `omnictl`
-
-```bash
-omnictl infraprovider create aws
-```
-This will print output like:
-
-```bash
-OMNI_ENDPOINT=https://omni...
-OMNI_SERVICE_ACCOUNT_KEY=elashecidgcegiDEDTNE...
-```
-Export these environment variables into your shell and save them to a file.
-
-```bash
-echo "export OMNI_ENDPOINT=$OMNI_ENDPOINT" > .env
-echo "export OMNI_SERVICE_ACCOUNT_KEY=$OMNI_SERVICE_ACCOUNT_KEY" >> .env
-```
-
-Create a machine class for the nodes.
-
-```bash
-cat <<EOF > machine-class.yaml
-metadata:
-  namespace: default
-  type: MachineClass.omni.sidero.dev
-  id: aws
-spec:
-  autoprovision:
-    providerid: aws
-    grpctunnel: 0
-    providerdata:
-      volume_size: 20
-      instance_type: t3.medium
-      securite_gorup_ids:
-        - $SG_ID
-      arch: amd64
-      subnet_id: ''
-      subnet_ids:
-        - $SUBNET_1
-        - $SUBNET_2
-        - $SUBNET_3
-EOF
-```
-
-Apply the machine class
-
-```bash
-omnictl apply -f machine-class.yaml
 ```
 
 ### 2. Deploy Infrastructure Provider
 
 #### Run locally with Docker
 
-```bash
-docker run -d \
-  --name omni-infra-provider-aws \
-  --restart unless-stopped \
-  -e OMNI_ENDPOINT \
-  -e OMNI_SERVICE_ACCOUNT_KEY \
-  -e AWS_REGION \
-  -e AWS_ACCESS_KEY_ID=your-access-key \
-  -e AWS_SECRET_ACCESS_KEY=your-secret-key \
-  rothgar/omni-infra-provider-aws:latest
-```
-
-**Alternative: Use AWS credentials from host**
+This mounts your local AWS credentials into the container for AWS authentication.
 
 ```bash
 docker run -d \
   --name omni-infra-provider-aws \
   --restart unless-stopped \
-  -v ~/.aws:$HOME/.aws:ro \
+  -v $HOME/.aws:/home/omni/.aws:ro \
   -e OMNI_ENDPOINT \
   -e OMNI_SERVICE_ACCOUNT_KEY \
   -e AWS_REGION \
@@ -316,6 +243,50 @@ EOF
   --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=omni-infra-provider-aws}]"
 ```
 
+### 3. Create Infrastructure Provider and Machine Class
+
+Create the infrastructure provider via `omnictl`
+
+```bash
+omnictl infraprovider create aws
+```
+This will print output like:
+
+```bash
+OMNI_ENDPOINT=https://omni...
+OMNI_SERVICE_ACCOUNT_KEY=elashecidgcegiDEDTNE...
+```
+Export these environment variables into your shell and save them to a file.
+
+```bash
+echo "export OMNI_ENDPOINT=$OMNI_ENDPOINT" > .env
+echo "export OMNI_SERVICE_ACCOUNT_KEY=$OMNI_SERVICE_ACCOUNT_KEY" >> .env
+```
+
+Create a machine class for the nodes.
+
+```bash
+cat <<EOF > machine-class.yaml
+metadata:
+  namespace: default
+  type: MachineClasses.omni.sidero.dev
+  id: aws
+spec:
+  autoprovision:
+    providerid: aws
+    grpctunnel: 0
+    providerdata: '{"volume_size":20,"instance_type":"t3.medium","security_group_ids":["$SG_ID"],"arch":"amd64","subnet_ids":["$SUBNET_1","$SUBNET_2","$SUBNET_3"]}'
+EOF
+```
+
+**Note:** The `providerdata` field must be a JSON-encoded string, not a YAML object.
+
+Apply the machine class
+
+```bash
+omnictl apply -f machine-class.yaml
+```
+
 ## Available Parameters
 
 | Parameter | Type | Required | Description |
@@ -327,6 +298,84 @@ EOF
 | `volume_size` | integer | No | Root volume size in GB (default: 8) |
 | `arch` | string | No | Architecture: `amd64` or `arm64` (default: amd64) |
 
+
+## Cleanup
+
+To remove all AWS resources created in this guide:
+
+```bash
+# Stop and remove the provider container (if running locally)
+docker stop omni-infra-provider-aws
+docker rm omni-infra-provider-aws
+
+# Find and terminate all EC2 instances created by the provider
+PROVIDER_INSTANCES=$(aws ec2 describe-instances \
+  --filters "Name=tag-key,Values=omni-request-id" "Name=instance-state-name,Values=running,stopped,pending" \
+  --query 'Reservations[*].Instances[*].InstanceId' --output text)
+
+if [ -n "$PROVIDER_INSTANCES" ]; then
+  echo "Terminating provider-managed instances: $PROVIDER_INSTANCES"
+  aws ec2 terminate-instances --instance-ids $PROVIDER_INSTANCES
+  aws ec2 wait instance-terminated --instance-ids $PROVIDER_INSTANCES
+fi
+
+# Find and terminate the provider EC2 instance (if deployed to EC2)
+PROVIDER_HOST=$(aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=omni-infra-provider-aws" "Name=instance-state-name,Values=running,stopped,pending" \
+  --query 'Reservations[*].Instances[*].InstanceId' --output text)
+
+if [ -n "$PROVIDER_HOST" ]; then
+  echo "Terminating provider host instance: $PROVIDER_HOST"
+  aws ec2 terminate-instances --instance-ids $PROVIDER_HOST
+  aws ec2 wait instance-terminated --instance-ids $PROVIDER_HOST
+fi
+
+# Delete security group
+if [ -n "$SG_ID" ]; then
+  aws ec2 delete-security-group --group-id $SG_ID
+fi
+
+# Delete subnets
+for subnet in $SUBNET_1 $SUBNET_2 $SUBNET_3; do
+  if [ -n "$subnet" ]; then
+    aws ec2 delete-subnet --subnet-id $subnet
+  fi
+done
+
+# Detach and delete internet gateway
+if [ -n "$IGW_ID" ] && [ -n "$VPC_ID" ]; then
+  aws ec2 detach-internet-gateway --internet-gateway-id $IGW_ID --vpc-id $VPC_ID
+  aws ec2 delete-internet-gateway --internet-gateway-id $IGW_ID
+fi
+
+# Delete VPC
+if [ -n "$VPC_ID" ]; then
+  aws ec2 delete-vpc --vpc-id $VPC_ID
+fi
+
+# Delete IAM resources (if created)
+aws iam remove-role-from-instance-profile \
+  --instance-profile-name OmniInfraProviderProfile \
+  --role-name OmniInfraProviderRole 2>/dev/null || true
+
+aws iam delete-instance-profile \
+  --instance-profile-name OmniInfraProviderProfile 2>/dev/null || true
+
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+aws iam detach-role-policy \
+  --role-name OmniInfraProviderRole \
+  --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/OmniInfraProviderPolicy 2>/dev/null || true
+
+aws iam delete-role \
+  --role-name OmniInfraProviderRole 2>/dev/null || true
+
+aws iam delete-policy \
+  --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/OmniInfraProviderPolicy 2>/dev/null || true
+
+echo "Cleanup complete"
+```
+
+**Note:** This assumes you still have the environment variables from the setup section. If you don't, you can find the resources by their Name tags or manually through the AWS console.
 
 ## Support
 
