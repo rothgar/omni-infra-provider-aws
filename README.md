@@ -480,7 +480,9 @@ Container images are automatically built and pushed to GitHub Container Registry
 
 - `ghcr.io/rothgar/omni-infra-provider-aws:latest` - Latest release
 - `ghcr.io/rothgar/omni-infra-provider-aws:v1.2.3` - Specific version
-- `ghcr.io/rothgar/omni-infra-provider-aws:main-<sha>` - Commit SHA from main branch
+- `ghcr.io/rothgar/omni-infra-provider-aws:1.2` - Major.minor version
+- `ghcr.io/rothgar/omni-infra-provider-aws:1` - Major version
+- `ghcr.io/rothgar/omni-infra-provider-aws:sha-<commit>` - Specific commit SHA
 
 ### Creating a Release
 
