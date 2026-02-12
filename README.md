@@ -236,20 +236,25 @@ rm omni-provider-policy.json trust-policy.json
 **Create EC2 Instance**
 
 ```bash
+# Create or use existing SSH key pair (optional, for troubleshooting)
+KEY_NAME="omni-provider-key"
+aws ec2 create-key-pair --key-name $KEY_NAME --query 'KeyMaterial' --output text > ~/.ssh/$KEY_NAME.pem
+chmod 400 ~/.ssh/$KEY_NAME.pem
+
+# Find latest Flatcar AMI
 AMI_ID=$(aws ec2 describe-images \
-  --region $AWS_REGION \
   --owners 075585003325 \
   --filters "Name=name,Values=Flatcar-stable-*-hvm" "Name=architecture,Values=x86_64" \
   --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
   --output text)
 
 # Create EC2 instance with user-data
-aws ec2 run-instances \
-  --region $AWS_REGION \
+INSTANCE_ID=$(aws ec2 run-instances \
   --image-id $AMI_ID \
   --instance-type t3.micro \
   --subnet-id $SUBNET_1 \
   --security-group-ids $SG_ID \
+  --key-name $KEY_NAME \
   --iam-instance-profile Name=OmniInfraProviderProfile \
   --user-data "$(cat <<EOF
 #!/bin/bash
@@ -260,11 +265,51 @@ docker run -d \
   --restart unless-stopped \
   -e OMNI_ENDPOINT=$OMNI_ENDPOINT \
   -e OMNI_SERVICE_ACCOUNT_KEY=$OMNI_SERVICE_ACCOUNT_KEY \
+  -e AWS_REGION=$AWS_REGION \
   ghcr.io/rothgar/omni-infra-provider-aws:latest
 EOF
 )" \
-  --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=omni-infra-provider-aws}]"
+  --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=omni-infra-provider-aws}]" \
+  --query 'Instances[0].InstanceId' \
+  --output text)
+
+echo "Instance created: $INSTANCE_ID"
 ```
+
+**View Container Logs**
+
+To view logs from the provider container:
+
+```bash
+# Get the instance's public IP
+INSTANCE_IP=$(aws ec2 describe-instances \
+  --instance-ids $INSTANCE_ID \
+  --query 'Reservations[0].Instances[0].PublicIpAddress' \
+  --output text)
+
+# SSH into the instance (default user is 'core' for Flatcar)
+ssh -i ~/.ssh/$KEY_NAME.pem core@$INSTANCE_IP
+
+# Once connected, view container logs:
+docker logs omni-infra-provider-aws
+
+# Follow logs in real-time:
+docker logs -f omni-infra-provider-aws
+
+# View last 100 lines:
+docker logs --tail 100 omni-infra-provider-aws
+```
+
+**Alternative: AWS Systems Manager Session Manager**
+
+If you don't want to manage SSH keys, you can use AWS Systems Manager:
+
+```bash
+# Connect without SSH (requires AWS SSM agent, not available on Flatcar by default)
+aws ssm start-session --target $INSTANCE_ID
+```
+
+**Note:** Flatcar doesn't include SSM agent by default. For SSM access, consider using Amazon Linux 2 instead of Flatcar.
 
 </details>
 
