@@ -199,8 +199,8 @@ cat > omni-provider-policy.json <<'EOF'
       ],
       "Resource": "arn:aws:ec2:*:*:instance/*",
       "Condition": {
-        "StringEquals": {
-          "ec2:ResourceTag/ManagedBy": "omni-infra-provider"
+        "StringLike": {
+          "ec2:ResourceTag/omni-request-id": "*"
         }
       }
     }
