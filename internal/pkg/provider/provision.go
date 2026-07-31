@@ -117,6 +117,25 @@ func (p *Provisioner) ProvisionSteps() []provision.Step[*resources.Machine] {
 				}
 			}
 
+			// IAM instance profile — required for VPC-CNI to hit ECR, EBS CSI
+			// to provision volumes, CCM to tag resources, etc. Defaults to
+			// AWS's documented convention ("AmazonEKSNodeRole") if the
+			// machine class doesn't override it. The role itself must exist
+			// in the target account with the standard EKS policies attached.
+			iamProfileName := data.IamInstanceProfileName
+			if data.IamInstanceProfileArn == "" && iamProfileName == "" {
+				iamProfileName = DefaultIamInstanceProfileName
+			}
+			if data.IamInstanceProfileArn != "" {
+				input.IamInstanceProfile = &types.IamInstanceProfileSpecification{
+					Arn: aws.String(data.IamInstanceProfileArn),
+				}
+			} else if iamProfileName != "" {
+				input.IamInstanceProfile = &types.IamInstanceProfileSpecification{
+					Name: aws.String(iamProfileName),
+				}
+			}
+
 			out, err := p.ec2Client.RunInstances(ctx, input)
 			if err != nil {
 				return err

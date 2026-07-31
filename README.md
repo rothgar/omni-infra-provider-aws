@@ -124,6 +124,14 @@ aws ec2 authorize-security-group-ingress \
 
 ### 2. Deploy Infrastructure Provider
 
+> **Heads up on IAM:** the credentials the provider runs with (either the
+> EC2 instance profile in the *Deploy to EC2* section below, or the local
+> `~/.aws` profile in the Docker command) must include the `iam:PassRole`
+> permission for the **node** IAM role — otherwise `RunInstances` fails
+> before the machine ever boots. The policy below already includes it; if
+> you run the provider locally with your own IAM user, add the same
+> `PassNodeRoleToEC2` statement to that user or its role.
+
 Create the infrastructure provider via `omnictl`
 
 ```bash
@@ -199,6 +207,17 @@ cat > omni-provider-policy.json <<'EOF'
       "Condition": {
         "StringLike": {
           "ec2:ResourceTag/omni-request-id": "*"
+        }
+      }
+    },
+    {
+      "Sid": "PassNodeRoleToEC2",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::*:role/AmazonEKSNodeRole",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "ec2.amazonaws.com"
         }
       }
     }
@@ -327,7 +346,70 @@ docker logs --tail 100 omni-infra-provider-aws
 
 </details>
 
-### 3. Create Infrastructure Provider and Machine Class
+### 3. Create the Node IAM Role
+
+Every EC2 instance the provider launches gets an IAM instance profile
+attached so in-cluster workloads (VPC CNI, EBS CSI driver, AWS CCM,
+cluster-autoscaler, etc.) can call AWS APIs. The provider defaults the
+instance profile name to `AmazonEKSNodeRole` — AWS's documented naming
+convention for EKS worker roles. It does **not** create the role for
+you; you must create it once per AWS account before launching any
+instances.
+
+```bash
+# Trust policy — EC2 assumes this role
+cat > node-trust-policy.json <<'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Service": "ec2.amazonaws.com" },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+
+aws iam create-role \
+  --role-name AmazonEKSNodeRole \
+  --assume-role-policy-document file://node-trust-policy.json
+
+# Attach the same managed policies EKS attaches to its node groups
+for POL in \
+  AmazonEKSWorkerNodePolicy \
+  AmazonEKS_CNI_Policy \
+  AmazonEC2ContainerRegistryReadOnly \
+  AmazonEBSCSIDriverPolicy \
+; do
+  aws iam attach-role-policy \
+    --role-name AmazonEKSNodeRole \
+    --policy-arn arn:aws:iam::aws:policy/$POL
+done
+
+# IAM instance profile wraps the role (same name is fine)
+aws iam create-instance-profile \
+  --instance-profile-name AmazonEKSNodeRole
+
+aws iam add-role-to-instance-profile \
+  --instance-profile-name AmazonEKSNodeRole \
+  --role-name AmazonEKSNodeRole
+
+rm node-trust-policy.json
+```
+
+If you use a different name, set `iam_instance_profile_name` (or
+`iam_instance_profile_arn`) in the machine class `providerdata` JSON —
+see the parameters table below. The provider IAM policy's
+`PassNodeRoleToEC2` statement scopes `iam:PassRole` to the resource
+`role/AmazonEKSNodeRole`; broaden it if you pick a different name.
+
+Additional workload-specific policies (AWS Load Balancer Controller,
+external-dns Route53 writes, cluster-autoscaler ASG modifications) are
+best delivered via IRSA once the cluster is up, so those controllers can
+each have their own tightly-scoped role.
+
+### 4. Create Infrastructure Provider and Machine Class
 
 
 Create a machine class for the nodes.
@@ -354,7 +436,7 @@ Apply the machine class. Make sure you run this from your user's Omni credential
 omnictl apply -f machine-class.yaml
 ```
 
-### 4. Create a Cluster
+### 5. Create a Cluster
 
 Create a cluster template file or use the provided example:
 
@@ -397,6 +479,8 @@ This will create a cluster named "aws" with 1 control plane node and 3 worker no
 | `security_group_ids` | array | Conditional* | Security group IDs |
 | `volume_size` | integer | No | Root volume size in GB (default: 8) |
 | `arch` | string | No | Architecture: `amd64` or `arm64` (default: amd64) |
+| `iam_instance_profile_arn` | string | No | Full ARN of the IAM instance profile to attach. Takes precedence over `iam_instance_profile_name`. |
+| `iam_instance_profile_name` | string | No | Name of the IAM instance profile to attach (default: `AmazonEKSNodeRole` — see [Create the Node IAM Role](#3-create-the-node-iam-role)). |
 
 
 ## Cleanup
@@ -471,6 +555,27 @@ aws iam delete-role \
 
 aws iam delete-policy \
   --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/OmniInfraProviderPolicy 2>/dev/null || true
+
+# Node IAM role (skip if you plan to reuse it for another cluster)
+for POL in \
+  AmazonEKSWorkerNodePolicy \
+  AmazonEKS_CNI_Policy \
+  AmazonEC2ContainerRegistryReadOnly \
+  AmazonEBSCSIDriverPolicy \
+; do
+  aws iam detach-role-policy \
+    --role-name AmazonEKSNodeRole \
+    --policy-arn arn:aws:iam::aws:policy/$POL 2>/dev/null || true
+done
+
+aws iam remove-role-from-instance-profile \
+  --instance-profile-name AmazonEKSNodeRole \
+  --role-name AmazonEKSNodeRole 2>/dev/null || true
+
+aws iam delete-instance-profile \
+  --instance-profile-name AmazonEKSNodeRole 2>/dev/null || true
+
+aws iam delete-role --role-name AmazonEKSNodeRole 2>/dev/null || true
 
 echo "Cleanup complete"
 ```
