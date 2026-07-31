@@ -346,18 +346,35 @@ docker logs --tail 100 omni-infra-provider-aws
 
 </details>
 
-### 3. Create the Node IAM Role
+### 3. Create the Node IAM Roles
 
 Every EC2 instance the provider launches gets an IAM instance profile
 attached so in-cluster workloads (VPC CNI, EBS CSI driver, AWS CCM,
 cluster-autoscaler, etc.) can call AWS APIs. The provider defaults the
 instance profile name to `AmazonEKSNodeRole` — AWS's documented naming
-convention for EKS worker roles. It does **not** create the role for
-you; you must create it once per AWS account before launching any
-instances.
+convention for EKS worker roles — but you can override it per machine
+class via `iam_instance_profile_name` in `providerdata`.
+
+The provider cannot distinguish a control-plane machine from a worker
+at provisioning time, so per-role IAM has to be done with **two
+machine classes** — one per role — each carrying its own
+`iam_instance_profile_name`. The cluster template then references the
+CP machine class from `kind: ControlPlane` and the worker one from
+`kind: Workers`.
+
+The most useful split is:
+
+* **`TalosControlPlane`** — broad AWS perms (VPC CNI, EBS CSI, LB
+  Controller, external-dns, cluster-autoscaler, CCM). Attach this to
+  the CP machine class if you schedule cluster infrastructure
+  controllers on the control-plane node.
+* **`TalosWorker`** — minimum perms for a user workload node: ECR pull
+  (to fetch container images) plus EBS attach if you run the EBS-CSI
+  node DaemonSet on workers.
+
+#### Create the `TalosControlPlane` role
 
 ```bash
-# Trust policy — EC2 assumes this role
 cat > node-trust-policy.json <<'EOF'
 {
   "Version": "2012-10-17",
@@ -372,47 +389,90 @@ cat > node-trust-policy.json <<'EOF'
 EOF
 
 aws iam create-role \
-  --role-name AmazonEKSNodeRole \
+  --role-name TalosControlPlane \
   --assume-role-policy-document file://node-trust-policy.json
 
-# Attach the same managed policies EKS attaches to its node groups
+# Broad perms — the CP hosts every AWS-integrating controller
 for POL in \
   AmazonEKSWorkerNodePolicy \
   AmazonEKS_CNI_Policy \
   AmazonEC2ContainerRegistryReadOnly \
   AmazonEBSCSIDriverPolicy \
+  ElasticLoadBalancingFullAccess \
+  AmazonRoute53FullAccess \
+  AutoScalingFullAccess \
 ; do
   aws iam attach-role-policy \
-    --role-name AmazonEKSNodeRole \
+    --role-name TalosControlPlane \
     --policy-arn arn:aws:iam::aws:policy/$POL
 done
 
-# IAM instance profile wraps the role (same name is fine)
 aws iam create-instance-profile \
-  --instance-profile-name AmazonEKSNodeRole
+  --instance-profile-name TalosControlPlane
 
 aws iam add-role-to-instance-profile \
-  --instance-profile-name AmazonEKSNodeRole \
-  --role-name AmazonEKSNodeRole
+  --instance-profile-name TalosControlPlane \
+  --role-name TalosControlPlane
+```
+
+#### Create the `TalosWorker` role
+
+```bash
+aws iam create-role \
+  --role-name TalosWorker \
+  --assume-role-policy-document file://node-trust-policy.json
+
+# Minimum: ECR pull for container images + EBS attach for CSI-node
+for POL in \
+  AmazonEC2ContainerRegistryReadOnly \
+  AmazonEBSCSIDriverPolicy \
+; do
+  aws iam attach-role-policy \
+    --role-name TalosWorker \
+    --policy-arn arn:aws:iam::aws:policy/$POL
+done
+
+aws iam create-instance-profile \
+  --instance-profile-name TalosWorker
+
+aws iam add-role-to-instance-profile \
+  --instance-profile-name TalosWorker \
+  --role-name TalosWorker
 
 rm node-trust-policy.json
 ```
 
-If you use a different name, set `iam_instance_profile_name` (or
-`iam_instance_profile_arn`) in the machine class `providerdata` JSON —
-see the parameters table below. The provider IAM policy's
-`PassNodeRoleToEC2` statement scopes `iam:PassRole` to the resource
-`role/AmazonEKSNodeRole`; broaden it if you pick a different name.
+> If you're using the `AmazonEKSNodeRole` default (unified role, no
+> per-role split), create just that one role with the four EKS-managed
+> policies (`AmazonEKSWorkerNodePolicy`, `AmazonEKS_CNI_Policy`,
+> `AmazonEC2ContainerRegistryReadOnly`, `AmazonEBSCSIDriverPolicy`) —
+> that matches AWS's standard node role and works without any machine
+> class overrides.
 
-Additional workload-specific policies (AWS Load Balancer Controller,
-external-dns Route53 writes, cluster-autoscaler ASG modifications) are
-best delivered via IRSA once the cluster is up, so those controllers can
-each have their own tightly-scoped role.
+#### Broaden `iam:PassRole` if you renamed the role(s)
 
-### 4. Create Infrastructure Provider and Machine Class
+The provider IAM policy's `PassNodeRoleToEC2` statement scopes
+`iam:PassRole` to the resource `role/AmazonEKSNodeRole`. If you're
+using `TalosControlPlane` and `TalosWorker`, update the `Resource`
+field to include both:
 
+```json
+"Resource": [
+  "arn:aws:iam::*:role/TalosControlPlane",
+  "arn:aws:iam::*:role/TalosWorker"
+]
+```
 
-Create a machine class for the nodes.
+Additional workload-specific policies (external-dns Route53 writes,
+cluster-autoscaler ASG modifications) are best delivered via IRSA once
+the cluster is up, so those controllers can each have their own
+tightly-scoped role. The `TalosControlPlane` role above is intended as
+a fast-start default; production setups should trim it down.
+
+### 4. Create Infrastructure Provider and Machine Class(es)
+
+If you're using the unified `AmazonEKSNodeRole` default, one machine
+class is enough:
 
 ```bash
 cat <<EOF > machine-class.yaml
@@ -428,12 +488,46 @@ spec:
 EOF
 ```
 
+For the split `TalosControlPlane` / `TalosWorker` pattern from
+step 3, create **two** machine classes so each role picks up its own
+IAM instance profile. Reference them from the cluster template's
+`kind: ControlPlane` and `kind: Workers` blocks.
+
+```bash
+cat <<EOF > machine-class-controlplane.yaml
+metadata:
+  namespace: default
+  type: MachineClasses.omni.sidero.dev
+  id: aws-controlplane
+spec:
+  autoprovision:
+    providerid: aws
+    grpctunnel: 0
+    providerdata: '{"volume_size":20,"instance_type":"t3.medium","security_group_ids":["$SG_ID"],"arch":"amd64","subnet_ids":["$SUBNET_1","$SUBNET_2","$SUBNET_3"],"iam_instance_profile_name":"TalosControlPlane"}'
+EOF
+
+cat <<EOF > machine-class-worker.yaml
+metadata:
+  namespace: default
+  type: MachineClasses.omni.sidero.dev
+  id: aws-worker
+spec:
+  autoprovision:
+    providerid: aws
+    grpctunnel: 0
+    providerdata: '{"volume_size":20,"instance_type":"t3.medium","security_group_ids":["$SG_ID"],"arch":"amd64","subnet_ids":["$SUBNET_1","$SUBNET_2","$SUBNET_3"],"iam_instance_profile_name":"TalosWorker"}'
+EOF
+```
+
 **Note:** The `providerdata` field must be a JSON-encoded string, not a YAML object.
 
-Apply the machine class. Make sure you run this from your user's Omni credentials and not with the `OMNI_SERVICE_ACCOUNT_KEY`.
+Apply the machine class(es). Make sure you run this from your user's Omni credentials and not with the `OMNI_SERVICE_ACCOUNT_KEY`.
 
 ```bash
 omnictl apply -f machine-class.yaml
+# or for the split pattern:
+omnictl apply -f machine-class-controlplane.yaml
+omnictl apply -f machine-class-worker.yaml
 ```
 
 ### 5. Create a Cluster
@@ -457,6 +551,30 @@ machineClass:
 kind: Workers
 machineClass:
   name: aws
+  size: 3
+EOF
+```
+
+For the split-role pattern from step 3+4 above (`TalosControlPlane` /
+`TalosWorker` IAM), reference the two machine classes:
+
+```bash
+cat <<EOF > cluster-template.yaml
+kind: Cluster
+name: aws
+kubernetes:
+  version: v1.34.2
+talos:
+  version: v1.12.3
+---
+kind: ControlPlane
+machineClass:
+  name: aws-controlplane
+  size: 1
+---
+kind: Workers
+machineClass:
+  name: aws-worker
   size: 3
 EOF
 ```
