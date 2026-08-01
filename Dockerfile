@@ -1,7 +1,13 @@
 # Multi-stage build for omni-infra-provider-aws
 
-# Build stage
-FROM golang:1.23-alpine AS builder
+# Build stage — pin FROM to $BUILDPLATFORM (the runner arch) so the Go
+# compile runs natively even when we're producing an arm64 image; then
+# cross-compile to the target via $TARGETARCH. Avoids ~15 min of QEMU
+# emulation on multi-arch builds.
+FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
 
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates tzdata
@@ -18,8 +24,8 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+# Cross-compile to whichever platform Buildx is producing this variant for.
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -ldflags="-w -s" \
     -o omni-infra-provider-aws \
     ./cmd/omni-infra-provider-aws
