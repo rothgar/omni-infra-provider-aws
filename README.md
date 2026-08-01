@@ -364,13 +364,16 @@ CP machine class from `kind: ControlPlane` and the worker one from
 
 The most useful split is:
 
-* **`TalosControlPlane`** — broad AWS perms (VPC CNI, EBS CSI, LB
-  Controller, external-dns, cluster-autoscaler, CCM). Attach this to
-  the CP machine class if you schedule cluster infrastructure
-  controllers on the control-plane node.
-* **`TalosWorker`** — minimum perms for a user workload node: ECR pull
-  (to fetch container images) plus EBS attach if you run the EBS-CSI
-  node DaemonSet on workers.
+* **`TalosControlPlane`** — everything a worker needs *plus* the
+  controller-only perms (Elastic Load Balancing for the AWS LB
+  Controller, Route53 for external-dns, Auto Scaling for
+  cluster-autoscaler). Attach this to the CP machine class if you
+  schedule cluster infrastructure controllers on the control-plane node.
+* **`TalosWorker`** — the same four managed policies EKS attaches to
+  its own node groups. Every DaemonSet that ships with an EKS-like
+  cluster (VPC-CNI, EBS-CSI node driver, kube-proxy) runs on workers
+  too, so workers need CNI ENI/IP-assignment perms and EBS
+  attach/detach perms — not just ECR pull.
 
 #### Create the `TalosControlPlane` role
 
@@ -422,8 +425,14 @@ aws iam create-role \
   --role-name TalosWorker \
   --assume-role-policy-document file://node-trust-policy.json
 
-# Minimum: ECR pull for container images + EBS attach for CSI-node
+# Same four policies EKS attaches to its worker node groups. WorkerNodePolicy
+# provides the ec2:Describe* perms needed by kubelet/CCM/VPC-CNI to introspect
+# the instance; CNI_Policy is required for aws-node to assign pod IPs;
+# ECRReadOnly lets kubelet pull container images; EBSCSIDriverPolicy lets the
+# ebs-csi-node DaemonSet attach/detach volumes.
 for POL in \
+  AmazonEKSWorkerNodePolicy \
+  AmazonEKS_CNI_Policy \
   AmazonEC2ContainerRegistryReadOnly \
   AmazonEBSCSIDriverPolicy \
 ; do
