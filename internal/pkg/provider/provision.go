@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"time"
 
@@ -190,6 +191,13 @@ func (p *Provisioner) Deprovision(ctx context.Context, logger *zap.Logger, machi
 		InstanceIds: []string{instanceID},
 	})
 	if err != nil {
+		// If the instance no longer exists it was already terminated — treat as success.
+		var apiErr interface{ ErrorCode() string }
+		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "InvalidInstanceID.NotFound" {
+			logger.Info("instance already terminated", zap.String("instance-id", instanceID))
+			return nil
+		}
+
 		return err
 	}
 
